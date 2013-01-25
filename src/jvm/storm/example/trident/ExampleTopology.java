@@ -20,12 +20,6 @@ import backtype.storm.LocalCluster;
 import backtype.storm.generated.StormTopology;
 import backtype.storm.tuple.Fields;
 import backtype.storm.tuple.Values;
-import org.apache.avro.generic.GenericRecord;
-import org.apache.avro.generic.GenericDatumReader;
-import org.apache.avro.Schema;
-import org.apache.avro.io.DatumReader;
-import org.apache.avro.io.Decoder;
-import org.apache.avro.io.DecoderFactory;
 import org.json.JSONObject;
 import org.json.JSONException;
 import storm.trident.TridentTopology;
@@ -53,14 +47,6 @@ public class ExampleTopology {
         // prevents calls from subclass
         throw new UnsupportedOperationException();
     }
-    /**
-     * Constant: Kafka domain to use.
-    **/
-    private static final String KAFKA_DOMAIN = "127.0.0.1";
-    /**
-     * Constant: Kafka port to use. Notice we are using the zookeeper port
-    **/
-    private static final int KAFKA_PORT = 9092;
 
     /**
      * Parses JSON published by Kafka.
@@ -143,35 +129,43 @@ public class ExampleTopology {
      * @return topology
     **/
     public static StormTopology buildTopology() {
-        HostPort hostport = new HostPort(KAFKA_DOMAIN, KAFKA_PORT);
-        TridentKafkaConfig.StaticHosts hosts =
-            new TridentKafkaConfig.StaticHosts(
-                  Lists.newArrayList(hostport)
-                , 1
+        try {
+            HostPort hostport = new HostPort(
+                  getEnvVar("KAFKA_DOMAIN")
+                , Integer.parseInt(getEnvVar("KAFKA_PORT")));
+
+            TridentKafkaConfig.StaticHosts hosts =
+                new TridentKafkaConfig.StaticHosts(
+                      Lists.newArrayList(hostport)
+                    , 1
+                );
+
+            TridentKafkaConfig config = new TridentKafkaConfig(
+                  hosts
+                , getEnvVar("KAFKA_TOPIC")
             );
+            TransactionalTridentKafkaSpout spout =
+                new TransactionalTridentKafkaSpout(config);
 
-        TridentKafkaConfig config = new TridentKafkaConfig(
-              hosts
-            , "test"
-        );
-        TransactionalTridentKafkaSpout spout =
-            new TransactionalTridentKafkaSpout(config);
-
-        TridentTopology topology = new TridentTopology();
-        topology.newStream("spout1", spout)
-            .each(new Fields("bytes"), new ParseJSON(),
-                new Fields(
+            TridentTopology topology = new TridentTopology();
+            topology.newStream("spout1", spout)
+                .each(new Fields("bytes"), new ParseJSON(),
+                    new Fields(
+                        "name",
+                        "type"
+                ))
+                .each(new Fields(
                     "name",
-                    "type"
-            ))
-            .each(new Fields(
-                "name",
-                "type"),
-                new WriteCSV(),
-                new Fields("result_id")
-            );
+                    "type"),
+                    new WriteCSV(),
+                    new Fields("result_id")
+                );
 
-        return topology.build();
+            return topology.build();
+        } catch (IOException e) {
+            System.err.println("Caught IOException: " + e.getMessage());
+        }
+        return null;
     }
 
     /**
@@ -187,5 +181,23 @@ public class ExampleTopology {
         LocalCluster cluster = new LocalCluster();
         cluster.submitTopology("ExampleTrident", conf, buildTopology());
     }
+
+   /**
+    * Check to make sure the environmental variable is set and return the
+    * value.
+    *
+    * @param env variable to get the value of.
+    * @return Environmental variable value.
+    * @throws IOException if row length is incorrect
+   **/
+    private static String getEnvVar(final String env) throws IOException {
+        String value = System.getenv(env);
+        if (value == null) {
+            throw new IOException(env + " environment variable is not set.");
+        }
+
+        return value;
+    }
+
 }
 
